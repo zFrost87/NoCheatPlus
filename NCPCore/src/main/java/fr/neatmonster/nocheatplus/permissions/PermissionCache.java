@@ -1,10 +1,10 @@
 package fr.neatmonster.nocheatplus.permissions;
 
-import com.google.common.base.Objects;
-import fr.neatmonster.nocheatplus.config.ConfigManager;
 import org.bukkit.entity.Player;
 
-import java.util.*;
+import java.util.HashMap;
+import java.util.Map;
+import java.util.UUID;
 
 /**
  * Cache for permission checks
@@ -15,62 +15,49 @@ import java.util.*;
 public class PermissionCache {
 
     public static boolean INITIALIZED = false;
-    private static Set<String> PERMISSION_GROUPS;
-    private static Map<PermissionInfo, Boolean> PERMISSION_CACHE;
+    private static Map<String, Map<UUID, PermCache>> HAS_PERM_CACHE;
 
     public static void init() {
         INITIALIZED = true;
-        PERMISSION_CACHE = new HashMap<>();
-        List<String> permissionPolicies = ConfigManager.getConfigFile().getStringList("permission-policy");
-        PERMISSION_GROUPS = new HashSet<>();
-        PERMISSION_GROUPS.addAll(permissionPolicies);
+        HAS_PERM_CACHE = new HashMap<>();
     }
 
     public static void close() {
         INITIALIZED = false;
-        PERMISSION_CACHE.clear();
+        HAS_PERM_CACHE.clear();
     }
 
     public static boolean hasPermission(Player player, String permission) {
-        for (String permissionGroup : PERMISSION_GROUPS) {
-            if (permission.startsWith(permissionGroup)) {
-                PermissionInfo info = new PermissionInfo(player.getUniqueId(), permissionGroup);
-                return PERMISSION_CACHE.computeIfAbsent(info, (i) -> player.hasPermission(permission));
-            }
+        if (!HAS_PERM_CACHE.containsKey(permission)) {
+            HAS_PERM_CACHE.put(permission, new HashMap<>());
         }
-        return player.hasPermission(permission);
+
+        PermCache permCache = HAS_PERM_CACHE.get(permission).get(player.getUniqueId());
+        if (permCache != null && System.currentTimeMillis() - permCache.lastCheckMillis < 30000L) {
+            return permCache.hasPermission;
+        }
+
+        boolean hasPermission = player.hasPermission(permission);
+
+        permCache = new PermCache(System.currentTimeMillis(), hasPermission);
+        HAS_PERM_CACHE.get(permission).put(player.getUniqueId(), permCache);
+
+        return hasPermission;
     }
 
     public static void clearPlayer(Player player) {
-        Set<PermissionInfo> permissionInfosToClear = new HashSet<>();
-        for (Map.Entry<PermissionInfo, Boolean> entry : PERMISSION_CACHE.entrySet()) {
-            PermissionInfo info = entry.getKey();
-            if (info.uuid.equals(player.getUniqueId())) {
-                permissionInfosToClear.add(info);
-            }
+        for (Map<UUID, PermCache> uuidPermCacheMap : HAS_PERM_CACHE.values()) {
+            uuidPermCacheMap.remove(player.getUniqueId());
         }
-        permissionInfosToClear.forEach(PERMISSION_CACHE::remove);
     }
 
-    public static class PermissionInfo {
-        UUID uuid;
-        String permission;
+    public static class PermCache {
+        private final Long lastCheckMillis;
+        private final Boolean hasPermission;
 
-        public PermissionInfo(UUID uuid, String permisison) {
-            this.uuid = uuid;
-            this.permission = permisison;
-        }
-
-        @Override
-        public int hashCode() {
-            return Objects.hashCode(uuid, permission);
-        }
-
-        @Override
-        public boolean equals(Object o) {
-            return o instanceof PermissionInfo
-                    && ((PermissionInfo) o).permission.equals(permission)
-                    && ((PermissionInfo) o).uuid.equals(uuid);
+        public PermCache(Long lastCheckMillis, Boolean hasPermission) {
+            this.lastCheckMillis = lastCheckMillis;
+            this.hasPermission = hasPermission;
         }
     }
 
